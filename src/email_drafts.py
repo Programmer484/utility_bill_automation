@@ -35,23 +35,37 @@ YAHOO_APP_PASSWORD = os.getenv("YAHOO_APP_PASSWORD")
 HOUSE_POLICIES = {
     "1705": {"required_vendors": ["ENMAX", "ATCO"], "template": "dual_vendor"},
     "1707": {"required_vendors": ["ENMAX", "ATCO"], "template": "dual_vendor"},
-    "default": {"required_vendors": None, "template": "single_vendor"},
+    "default": {"required_vendors": ["ENMAX"], "template": "single_vendor"},
 }
 
 def _get_house_policy(house: str) -> dict:
     return HOUSE_POLICIES.get(str(house), HOUSE_POLICIES["default"])
 
 def get_email_template(tenant_name: str, rent_date: str, base_rent: float, 
-                      utility_share: int, total_utilities: float, final_amount: float) -> str:
+                      utility_share: int, total_utilities: float, final_amount: float, 
+                      template_type: str = "single_vendor") -> str:
     """Generate email template with placeholders filled in."""
-    return f"""Hi everyone,
+    
+    if template_type == "dual_vendor":
+        # Template for houses with multiple vendors (ENMAX + ATCO)
+        return f"""Hi everyone,
 
-    Attached is last month's utilities bill.
+Attached are last month's utility bills.
 
-    The {rent_date} rent amount is:
-    ${base_rent} + {utility_share}% * ${total_utilities:.2f} = ${final_amount:.2f}
+The {rent_date} rent amount is:
+${base_rent} + {utility_share}% * ${total_utilities:.2f} = ${final_amount:.2f}
 
-    Best regards."""
+Best regards."""
+    else:
+        # Template for houses with single vendor (ENMAX only)
+        return f"""Hi everyone,
+
+Attached is last month's utilities bill.
+
+The {rent_date} rent amount is:
+${base_rent} + {utility_share}% * ${total_utilities:.2f} = ${final_amount:.2f}
+
+Best regards."""
 
 def find_utility_images(house: str, month_date: str) -> List[str]:
     """Resolve utility bill images for a house and month, enforcing policy.
@@ -139,18 +153,31 @@ def create_email_draft(house: str, month_date: str, total_utilities: float) -> M
     utility_share_amount = (utility_share_percent / 100) * total_utilities
     final_amount = base_rent + utility_share_amount
     
-    # Format rent date (convert from YYYY-MM-DD to Month DD, YYYY)
+    # Format rent date (month after bill month, without day)
     try:
-        from datetime import datetime
-        dt = datetime.strptime(month_date, "%Y-%m-%d")
-        rent_date = dt.strftime("%B %d, %Y")
+        from datetime import datetime, timedelta
+        import calendar
+        
+        # Parse the bill month and add one month
+        bill_dt = datetime.strptime(month_date, "%Y-%m-%d")
+        
+        # Add approximately one month (handles year rollover automatically)
+        next_month_dt = bill_dt.replace(day=1) + timedelta(days=32)
+        next_month_dt = next_month_dt.replace(day=1)  # First of next month
+        
+        # Format as "Month YYYY" (no day)
+        rent_date = next_month_dt.strftime("%B %Y")
     except:
         rent_date = month_date
+    
+    # Get house policy to determine template type
+    house_policy = _get_house_policy(house)
+    template_type = house_policy.get("template", "single_vendor")
     
     # Generate email content
     email_content = get_email_template(
         tenant_name, rent_date, base_rent, utility_share_percent, 
-        total_utilities, final_amount
+        total_utilities, final_amount, template_type
     )
     
     # Create email message

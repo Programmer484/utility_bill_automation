@@ -14,6 +14,18 @@ PROJECT_ROOT = Path(__file__).parent
 # Excel file path (still hardcoded as it's needed to read config)
 EXCEL_PATH = str(PROJECT_ROOT / "utility_bills.xlsx")
 
+# Default configuration values
+DEFAULT_CONFIG = {
+    'excel_data_sheet': 'Data',
+    'raw_bills_folder': str(PROJECT_ROOT / "bills"),
+    'processed_bills_folder': str(PROJECT_ROOT / "bills_processed"),
+    'images_folder': str(PROJECT_ROOT / "bill_images"),
+    'image_bottom_crop_px': 450,
+    'atco_indicator': 'statements',
+    'house_numbers': ['819', '1705', '1707', '1712'],
+    'move_processed_files': False,
+}
+
 # Cache for config values
 _config_cache: Dict[str, Any] = {}
 _tenant_cache: Dict[str, Dict[str, Any]] = {}
@@ -33,6 +45,15 @@ def load_config() -> Dict[str, Any]:
         for _, row in config_df.iterrows():
             key = row['key']
             value = row['value']
+            
+            # Handle NaN values - use defaults
+            if pd.isna(value):
+                if key in DEFAULT_CONFIG:
+                    value = DEFAULT_CONFIG[key]
+                else:
+                    # For unknown NaN values, skip
+                    print(f"Warning: No value found for config key '{key}', skipping.")
+                    continue
             
             # Type conversion based on key
             if key == 'image_bottom_crop_px':
@@ -58,16 +79,7 @@ def load_config() -> Dict[str, Any]:
 
 def _get_fallback_config() -> Dict[str, Any]:
     """Fallback configuration if Excel config cannot be loaded."""
-    return {
-        'excel_data_sheet': 'Data',
-        'raw_bills_folder': str(PROJECT_ROOT / 'bills'),
-        'processed_bills_folder': str(PROJECT_ROOT / 'bills_processed'),
-        'images_folder': str(PROJECT_ROOT / 'bill_images'),
-        'image_bottom_crop_px': 450,
-        'atco_indicator': 'statements',
-        'house_numbers': ['819', '1705', '1707', '1712'],
-        'move_processed_files': False,
-    }
+    return DEFAULT_CONFIG.copy()
 
 def get_config(key: str) -> Any:
     """Get a single configuration value."""
