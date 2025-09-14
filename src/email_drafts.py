@@ -46,12 +46,12 @@ def get_email_template(tenant_name: str, rent_date: str, base_rent: float,
     """Generate email template with placeholders filled in."""
     return f"""Hi everyone,
 
-Attached is last month's utilities bill.
+    Attached is last month's utilities bill.
 
-The {rent_date} rent amount is:
-${base_rent} + {utility_share}% * ${total_utilities:.2f} = ${final_amount:.2f}
+    The {rent_date} rent amount is:
+    ${base_rent} + {utility_share}% * ${total_utilities:.2f} = ${final_amount:.2f}
 
-Best regards."""
+    Best regards."""
 
 def find_utility_images(house: str, month_date: str) -> List[str]:
     """Resolve utility bill images for a house and month, enforcing policy.
@@ -119,6 +119,16 @@ def find_utility_images(house: str, month_date: str) -> List[str]:
 
 def create_email_draft(house: str, month_date: str, total_utilities: float) -> MIMEMultipart:
     """Create email draft for a specific house."""
+    # First, check if we can find the required utility images
+    # This will raise ValueError if required vendors are missing
+    image_paths = find_utility_images(house, month_date)
+    
+    # Additional check: ensure we actually have some images to attach
+    if not image_paths:
+        raise ValueError(f"No utility bill images found for house {house} {month_date}")
+    
+    print(f"Found {len(image_paths)} images for {house}: {[Path(p).name for p in image_paths]}")
+    
     # Get tenant data for this house
     tenant_data = get_tenant_data(str(house))
     tenant_name = tenant_data["tenant_name"]
@@ -152,10 +162,7 @@ def create_email_draft(house: str, month_date: str, total_utilities: float) -> M
     # Add email body
     msg.attach(MIMEText(email_content, 'plain'))
     
-    # Attach utility bill images for the month (enforces policy completeness)
-    image_paths = find_utility_images(house, month_date)
-    print(f"Found {len(image_paths)} images for {house}: {[Path(p).name for p in image_paths]}")
-    
+    # Attach utility bill images for the month
     for image_path in image_paths:
         try:
             if os.path.exists(image_path):

@@ -60,7 +60,7 @@ def _get_fallback_config() -> Dict[str, Any]:
     """Fallback configuration if Excel config cannot be loaded."""
     return {
         'excel_data_sheet': 'Data',
-        'raw_bills_folder': '/home/ryan/Downloads',
+        'raw_bills_folder': str(PROJECT_ROOT / 'bills'),
         'processed_bills_folder': str(PROJECT_ROOT / 'bills_processed'),
         'images_folder': str(PROJECT_ROOT / 'bill_images'),
         'image_bottom_crop_px': 450,
