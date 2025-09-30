@@ -1,5 +1,4 @@
 import os
-import smtplib
 import imaplib
 import time
 import pandas as pd
@@ -25,8 +24,8 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 # Add current directory to path for local imports
 sys.path.append(str(Path(__file__).parent))
-from config import get_excel_path, get_excel_data_sheet, get_images_folder, bill_date_to_month_end
-from excel import latest_month_totals, get_tenant_data
+from config import get_excel_path, get_excel_data_sheet, get_images_folder, bill_date_to_month_end, get_config
+from excel import get_tenant_data
 
 # Email configuration
 YAHOO_USER = os.getenv("YAHOO_USER")
@@ -43,19 +42,31 @@ def _get_house_policy(house: str) -> dict:
 
 def get_email_template(tenant_name: str, rent_date: str, base_rent: float, 
                       utility_share: int, total_utilities: float, final_amount: float, 
-                      template_type: str = "single_vendor") -> str:
+                      template_type: str = "single_vendor", vendor_breakdown: Dict = None) -> str:
     """Generate email template with placeholders filled in."""
     
-    if template_type == "dual_vendor":
+    if template_type == "dual_vendor" and vendor_breakdown:
         # Template for houses with multiple vendors (ENMAX + ATCO)
+        breakdown_text = ""
+        for vendor, amount in vendor_breakdown.items():
+            if vendor == "ENMAX":
+                breakdown_text += f"ENMAX (Wastewater): ${amount:.2f}\n"
+            elif vendor == "ATCO":
+                breakdown_text += f"ATCO (Electricity/Natural Gas): ${amount:.2f}\n"
+            else:
+                breakdown_text += f"{vendor}: ${amount:.2f}\n"
+        
         return f"""Hi everyone,
 
 Attached are last month's utility bills.
 
+Utility breakdown:
+{breakdown_text}Total utilities: ${total_utilities:.2f}
+
 The {rent_date} rent amount is:
 ${base_rent} + {utility_share}% * ${total_utilities:.2f} = ${final_amount:.2f}
 
-Best regards."""
+Thank you."""
     else:
         # Template for houses with single vendor (ENMAX only)
         return f"""Hi everyone,
@@ -65,7 +76,40 @@ Attached is last month's utilities bill.
 The {rent_date} rent amount is:
 ${base_rent} + {utility_share}% * ${total_utilities:.2f} = ${final_amount:.2f}
 
-Best regards."""
+Thank you."""
+
+def find_utility_images_from_bills(house: str, month_date: str, bills_data: List[Dict]) -> List[str]:
+    """Find utility images directly from fresh bill data (no Excel dependency)."""
+    image_folder = Path(get_images_folder())
+    image_paths = []
+    
+    # Get house policy for vendor requirements
+    policy = _get_house_policy(house)
+    required_vendors = policy.get("required_vendors", [])
+    
+    vendors_found = []
+    for bill in bills_data:
+        vendor = bill['vendor']
+        bill_date = bill['date']
+        
+        # Create expected image filename
+        img_name = f"{house}_{bill_date}_{vendor}.png"
+        img_path = image_folder / img_name
+        
+        if img_path.exists():
+            image_paths.append(str(img_path))
+            vendors_found.append(vendor)
+    
+    # Check if required vendors are present
+    if required_vendors:
+        missing_vendors = [v for v in required_vendors if v not in vendors_found]
+        if missing_vendors:
+            raise ValueError(f"Missing required vendors for house {house} {month_date}: {missing_vendors}")
+    
+    if not image_paths:
+        raise ValueError(f"No utility bill images found for house {house} {month_date}")
+    
+    return sorted(image_paths)  # Return in consistent order
 
 def find_utility_images(house: str, month_date: str) -> List[str]:
     """Resolve utility bill images for a house and month, enforcing policy.
@@ -131,11 +175,15 @@ def find_utility_images(house: str, month_date: str) -> List[str]:
     # default: return all images we found, sorted by vendor name for stability
     return [vendor_to_image[v] for v in sorted(vendor_to_image.keys())]
 
-def create_email_draft(house: str, month_date: str, total_utilities: float) -> MIMEMultipart:
+def create_email_draft(house: str, month_date: str, total_utilities: float, vendor_breakdown: Dict = None, bills_data: List[Dict] = None) -> MIMEMultipart:
     """Create email draft for a specific house."""
-    # First, check if we can find the required utility images
-    # This will raise ValueError if required vendors are missing
-    image_paths = find_utility_images(house, month_date)
+    
+    # Find utility images directly from fresh bill data instead of Excel
+    if bills_data:
+        image_paths = find_utility_images_from_bills(house, month_date, bills_data)
+    else:
+        # Fallback to Excel-based lookup (for backward compatibility)
+        image_paths = find_utility_images(house, month_date)
     
     # Additional check: ensure we actually have some images to attach
     if not image_paths:
@@ -165,8 +213,8 @@ def create_email_draft(house: str, month_date: str, total_utilities: float) -> M
         next_month_dt = bill_dt.replace(day=1) + timedelta(days=32)
         next_month_dt = next_month_dt.replace(day=1)  # First of next month
         
-        # Format as "Month YYYY" (no day)
-        rent_date = next_month_dt.strftime("%B %Y")
+        # Format as "Month 1" (first of the month)
+        rent_date = next_month_dt.strftime("%B 1")
     except:
         rent_date = month_date
     
@@ -177,14 +225,27 @@ def create_email_draft(house: str, month_date: str, total_utilities: float) -> M
     # Generate email content
     email_content = get_email_template(
         tenant_name, rent_date, base_rent, utility_share_percent, 
-        total_utilities, final_amount, template_type
+        total_utilities, final_amount, template_type, vendor_breakdown
     )
     
     # Create email message
     msg = MIMEMultipart()
     msg['From'] = YAHOO_USER
     msg['To'] = f"tenant_{house}@example.com"  # Placeholder email
-    msg['Subject'] = f"Rent Statement - {house} - {rent_date}"
+    # Subject should be one month before rent date (bill month, not rent month)
+    try:
+        from datetime import datetime, timedelta
+        # Parse rent date to get previous month for subject
+        rent_month_dt = datetime.strptime(rent_date.split()[0] + " 2025", "%B %Y")
+        # Subtract one month for bill month
+        bill_month_dt = rent_month_dt.replace(day=1) - timedelta(days=1)
+        bill_month_dt = bill_month_dt.replace(day=1)  # First of previous month
+        bill_month = bill_month_dt.strftime("%B")
+        msg['Subject'] = f"{bill_month} utility bill"
+    except:
+        # Fallback: just use rent month if parsing fails
+        month_only = rent_date.split()[0]
+        msg['Subject'] = f"{month_only} utility bill"
     
     # Add email body
     msg.attach(MIMEText(email_content, 'plain'))
@@ -214,24 +275,6 @@ def list_attachments(msg: MIMEMultipart) -> List[str]:
             names.append(filename)
     return names
 
-def dry_run_print() -> None:
-    """Print what would be drafted (no IMAP), using Data-based latest-month totals."""
-    df_latest = latest_month_totals(get_excel_path(), get_excel_data_sheet())
-    if df_latest.empty:
-        print("No data found in Data sheet")
-        return
-    print(f"Latest-month rows: {len(df_latest)}")
-    for _, row in df_latest.iterrows():
-        house = str(row['house_number'])
-        month_date = str(row['latest_month'].date())
-        total_utilities = float(row['total'])
-        print(f"--- Dry-run: house={house} month={month_date} total=${total_utilities:.2f}")
-        try:
-            msg = create_email_draft(house, month_date, total_utilities)
-            attach_names = list_attachments(msg)
-            print(f"Would draft. Attachments ({len(attach_names)}): {attach_names}")
-        except Exception as e:
-            print(f"SKIP {house} {month_date}: {e}")
 
 def save_draft_via_imap(msg: MIMEMultipart) -> bool:
     try:
@@ -265,58 +308,107 @@ def save_draft_via_imap(msg: MIMEMultipart) -> bool:
         print(f"Error saving draft via IMAP: {e}")
         return False
 
-def generate_email_drafts(dry_run: bool = False) -> None:
+def generate_email_drafts(processed_bills: List[Dict]) -> None:
     """
-    Generate email drafts for all houses using latest month data.
+    Generate email drafts from freshly processed bill data.
     
     Args:
-        dry_run: If True, only print what would be generated without creating actual drafts
+        processed_bills: List of bill dicts with keys: house_number, bill_date, bill_amount, vendor
     """
-    if dry_run:
-        dry_run_print()
-        return
-        
-    if not YAHOO_USER or not YAHOO_APP_PASSWORD:
+    # Check if we're in test/dry run mode
+    try:
+        test_mode = get_config('test_email_drafts')
+        if test_mode:
+            print("TEST MODE: Printing email drafts instead of creating them")
+    except Exception:
+        test_mode = False
+    
+    if not test_mode and (not YAHOO_USER or not YAHOO_APP_PASSWORD):
         print("Error: YAHOO_USER and YAHOO_APP_PASSWORD environment variables required")
         return
     
+    if not processed_bills:
+        print("No bills to process for email generation")
+        return
+    
     try:
-        # Compute latest-month totals directly from the Data sheet
-        df_latest = latest_month_totals(get_excel_path(), get_excel_data_sheet())
-        if df_latest.empty:
-            print("No data found in Data sheet")
-            return
-
-        print(f"Generating email drafts for {len(df_latest)} houses...")
-
-        for _, row in df_latest.iterrows():
-            house = str(row['house_number'])
-            month_date = str(row['latest_month'].date())
-            total_utilities = float(row['total'])
+        # Group bills by house and month
+        from datetime import datetime
+        from collections import defaultdict
+        
+        # Structure: {house: {month_key: [bills]}}
+        bills_by_house_month = defaultdict(lambda: defaultdict(list))
+        
+        for bill in processed_bills:
+            house = str(bill['house_number'])
+            bill_date = bill['bill_date']
+            amount = bill.get('bill_amount')
+            vendor = bill.get('vendor')
             
-            print(f"Processing {house} for {month_date} (utilities: ${total_utilities:.2f})")
+            if not bill_date or amount is None or amount == '':
+                continue
+                
+            # Convert to month-end key
+            month_key = bill_date_to_month_end(bill_date)
+            bills_by_house_month[house][month_key].append({
+                'vendor': vendor,
+                'amount': float(amount),
+                'date': bill_date
+            })
+        
+        print(f"Generating email drafts for {len(bills_by_house_month)} houses...")
+        
+        # Generate emails for each house's latest month
+        for house, months_data in bills_by_house_month.items():
+            # Get the latest month for this house
+            latest_month = max(months_data.keys())
+            bills_for_month = months_data[latest_month]
+            
+            # Calculate total utilities
+            total_utilities = sum(b['amount'] for b in bills_for_month)
+            
+            print(f"Processing {house} for {latest_month} (utilities: ${total_utilities:.2f})")
             
             try:
+                # Create vendor breakdown for dual vendor emails
+                vendor_breakdown = {b['vendor']: b['amount'] for b in bills_for_month}
+                
                 # Create email draft (will enforce required vendors when applicable)
-                msg = create_email_draft(house, month_date, total_utilities)
+                msg = create_email_draft(house, latest_month, total_utilities, vendor_breakdown, bills_for_month)
+                
+                if test_mode:
+                    # Test mode - just print what would be sent
+                    print(f"TEST: Would create email draft for {house}")
+                    print(f"  Subject: {msg['Subject']}")
+                    print(f"  To: {msg['To']}")
+                    
+                    # List attachments
+                    attach_names = list_attachments(msg)
+                    print(f"  Attachments ({len(attach_names)}): {attach_names}")
+                    print()
+                else:
+                    # Real mode - save draft to Yahoo via IMAP
+                    saved = save_draft_via_imap(msg)
+                    if not saved:
+                        print(f"Failed to save draft for {house} via IMAP")
+                        
             except Exception as e:
-                print(f"Skipping {house} for {month_date}: {e}")
+                print(f"Skipping {house} for {latest_month}: {e}")
                 continue
-            
-            # Save draft to Yahoo via IMAP
-            saved = save_draft_via_imap(msg)
-            if not saved:
-                print(f"Failed to save draft for {house} via IMAP")
         
-        print("Email drafts generated successfully!")
+        if test_mode:
+            print("TEST MODE: Email drafts printed successfully!")
+        else:
+            print("Email drafts generated successfully!")
         
     except Exception as e:
         print(f"Error generating email drafts: {e}")
 
+
 def main():
-    """CLI entry point - checks for dry run environment variable."""
-    dry_run = os.getenv("EMAIL_DRAFTS_DRY_RUN", "").lower() in {"1","true","yes"}
-    generate_email_drafts(dry_run=dry_run)
+    """CLI entry point - generates emails from Excel data for testing."""
+    print("Email generation now only works from processed bills data.")
+    print("Run the main pipeline instead: python3 main.py")
 
 if __name__ == "__main__":
     main()

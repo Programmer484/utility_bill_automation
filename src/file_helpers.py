@@ -16,7 +16,7 @@ from config import (
     get_images_folder,
     get_image_bottom_crop_px,
 )
-from pdf_to_img import convert_pdf_to_image
+from pdf_utils import convert_pdf_to_image
 
 log = logging.getLogger("bill-pipeline")
 
