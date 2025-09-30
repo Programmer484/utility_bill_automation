@@ -1,17 +1,14 @@
 import logging
-import re
 from typing import Dict, List, Optional
 
 from config import (
     get_excel_path,
     get_excel_data_sheet,
     get_raw_bills_folder,
-    get_atco_indicator,
     get_move_processed_files,
 )
 from src.excel import append_rows_to_excel
-from src.extract_enmax import extract_enmax_from_pdf
-from src.extract_atco import extract_atco_from_pdf
+from src.data_processing import route_and_extract
 from src.file_helpers import (
     setup_directories,
     get_pdf_files,
@@ -26,65 +23,7 @@ logging.basicConfig(    level=logging.INFO,
 )
 log = logging.getLogger("bill-pipeline")
 
-# -------------------- helpers --------------------
-
-def normalize_row(row: Dict) -> Dict:
-    """Normalize fields: vendor uppercase/trim, numeric amount, ISO date."""
-    out = dict(row)
-    # vendor
-    v = (out.get("vendor") or "").strip().upper()
-    if v in {"ENMAX", "ATCO"}:
-        out["vendor"] = v
-    else:
-        # if unknown, keep whatever we got but uppercased
-        out["vendor"] = v or "UNKNOWN"
-
-    # amount
-    amt = out.get("bill_amount")
-    try:
-        out["bill_amount"] = float(amt) if amt is not None and amt != "" else None
-    except Exception:
-        out["bill_amount"] = None
-
-    # bill_date (must be YYYY-MM-DD)
-    date_str = (out.get("bill_date") or "").strip()
-    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_str):
-        out["bill_date"] = date_str
-    else:
-        # attempt to coerce simple patterns like "YYYY/M/D" etc.
-        m = re.fullmatch(r"(\d{4})[/-](\d{1,2})[/-](\d{1,2})", date_str)
-        if m:
-            y, mo, d = map(int, m.groups())
-            out["bill_date"] = f"{y:04d}-{mo:02d}-{d:02d}"
-        else:
-            out["bill_date"] = None
-
-    # house_number as int if possible (kept as string otherwise)
-    house = out.get("house_number")
-    try:
-        out["house_number"] = int(house)
-    except Exception:
-        out["house_number"] = house  # leave as-is
-
-    return out
-
-def route_and_extract(filename: str) -> Dict:
-    """Extract bill data from PDF and determine vendor by filename as fallback."""
-    atco_indicator = get_atco_indicator()
-    raw_bills_folder = get_raw_bills_folder()
-    
-    vendor = "ATCO" if atco_indicator in filename.lower() else "ENMAX"
-    extractor = extract_atco_from_pdf if vendor == "ATCO" else extract_enmax_from_pdf
-    try:
-        data = extractor(filename, folder=raw_bills_folder)
-    except Exception as e:
-        log.exception("Extractor failed: %s", filename)
-        raise
-
-    # prefer extractor's vendor if present; else use filename heuristic
-    extracted_vendor = (data.get("vendor") or "").strip().upper()
-    data["vendor"] = extracted_vendor or vendor
-    return normalize_row(data)
+# -------------------- processing functions --------------------
 
 def process_single_file(filename: str) -> Optional[Dict]:
     """Extract, create image, move PDF; return row for Excel or None."""
@@ -141,9 +80,7 @@ def main():
     pdf_files = get_pdf_files()
     if not pdf_files:
         log.info("No PDFs found in %s", get_raw_bills_folder())
-        # Still generate emails even if no new PDFs to process
-        log.info("Generating email drafts from existing data...")
-        generate_email_drafts()
+        log.info("No bills to process, no emails to generate.")
         return
 
     rows: List[Dict] = []
@@ -155,13 +92,16 @@ def main():
         rows.append(result)
 
     if rows:
+        # Generate emails from fresh data BEFORE saving to Excel
+        log.info("Processing complete. Generating email drafts from fresh data...")
+        generate_email_drafts(rows)
+        
+        # Save to Excel for record-keeping
+        log.info("Saving processed bills to Excel...")
         output_results(rows)
-        log.info("Processing complete. Generating email drafts...")
-        generate_email_drafts()
     else:
-        log.info("No new rows to append.")
-        log.info("Generating email drafts from existing data...")
-        generate_email_drafts()
+        log.info("No valid bills processed, no emails to generate.")
 
 if __name__ == "__main__":
     main()
+
