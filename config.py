@@ -11,32 +11,12 @@ from typing import Dict, Any, List
 PROJECT_ROOT = Path(__file__).parent
 EXCEL_PATH = str(PROJECT_ROOT / "utility_bills.xlsx")
 
-# Default values for all settings
-DEFAULTS = {
-    # Config sheet defaults
-    'excel_data_sheet': 'Data',
-    'raw_bills_folder': str(PROJECT_ROOT / "bills"),
-    'processed_bills_folder': str(PROJECT_ROOT / "bills_processed"),
-    'images_folder': str(PROJECT_ROOT / "bill_images"),
-    'image_bottom_crop_px': 450,
-    'atco_indicator': 'statements',
-    'house_numbers': ['819', '1705', '1707', '1712'],
-    'move_processed_files': False,
-    'test_email_drafts': False,
-    
-    # Tenant defaults
-    'tenant_data': {
-        "819": {"tenant_name": "Sarah Johnson", "email": "sarah.johnson@email.com", "base_rent": 1200.0, "utility_share_percent": 60},
-        "1705": {"tenant_name": "Mike Chen", "email": "mike.chen@email.com", "base_rent": 1150.0, "utility_share_percent": 60},
-        "1707": {"tenant_name": "Emma Rodriguez", "email": "emma.rodriguez@email.com", "base_rent": 1200.0, "utility_share_percent": 60},
-        "1712": {"tenant_name": "James Wilson", "email": "james.wilson@email.com", "base_rent": 1100.0, "utility_share_percent": 60}
-    }
-}
+# Excel is the only source of truth for configuration
 
 def _convert_value(key: str, value: Any) -> Any:
     """Convert Excel values to proper types."""
     if pd.isna(value):
-        return DEFAULTS.get(key)
+        return None
     
     if key == 'image_bottom_crop_px':
         return int(value)
@@ -44,13 +24,11 @@ def _convert_value(key: str, value: Any) -> Any:
         if isinstance(value, bool):
             return value
         return str(value).lower() in ('true', '1', 'yes')
-    elif key == 'house_numbers':
-        return [h.strip() for h in str(value).split(',')]
     
     return value
 
 def load_config() -> Dict[str, Any]:
-    """Load configuration from Excel Config sheet with fallbacks."""
+    """Load configuration from Excel Config sheet - Excel is the only source of truth."""
     try:
         config_df = pd.read_excel(EXCEL_PATH, sheet_name="Config")
         config = {}
@@ -60,21 +38,14 @@ def load_config() -> Dict[str, Any]:
             value = _convert_value(key, row['value'])
             if value is not None:
                 config[key] = value
-        
-        # Ensure all defaults are present
-        for key, default_value in DEFAULTS.items():
-            if key not in config and key != 'tenant_data':
-                config[key] = default_value
                 
         return config
         
     except Exception as e:
-        print(f"Warning: Could not load config from Excel: {e}")
-        print("Using fallback values...")
-        return {k: v for k, v in DEFAULTS.items() if k != 'tenant_data'}
+        raise Exception(f"Could not load config from Excel Config sheet: {e}. Excel must be properly configured.")
 
 def load_tenant_data() -> Dict[str, Dict[str, Any]]:
-    """Load tenant data from Excel Tenants sheet with fallbacks."""
+    """Load tenant data from Excel Tenants sheet - Excel is the only source of truth."""
     try:
         tenants_df = pd.read_excel(EXCEL_PATH, sheet_name="Tenants")
         tenant_dict = {}
@@ -91,9 +62,7 @@ def load_tenant_data() -> Dict[str, Dict[str, Any]]:
         return tenant_dict
         
     except Exception as e:
-        print(f"Warning: Could not load tenant data from Excel: {e}")
-        print("Using fallback tenant data...")
-        return DEFAULTS['tenant_data']
+        raise Exception(f"Could not load tenant data from Excel Tenants sheet: {e}. Excel must be properly configured.")
 
 def get_config(key: str) -> Any:
     """Get a single configuration value."""
@@ -125,7 +94,14 @@ def get_atco_indicator() -> str:
     return get_config('atco_indicator')
 
 def get_house_numbers() -> List[str]:
-    return get_config('house_numbers')
+    """Get house numbers from the first column of the Tenants sheet."""
+    try:
+        tenants_df = pd.read_excel(EXCEL_PATH, sheet_name="Tenants")
+        # Convert to string and return as list
+        return [str(house) for house in tenants_df['house_number'].tolist()]
+    except Exception as e:
+        print(f"Error reading house numbers from Tenants sheet: {e}")
+        return []
 
 def get_move_processed_files() -> bool:
     return get_config('move_processed_files')
