@@ -47,36 +47,38 @@ def get_email_template(tenant_name: str, rent_date: str, base_rent: float,
     
     if template_type == "dual_vendor" and vendor_breakdown:
         # Template for houses with multiple vendors (ENMAX + ATCO)
-        breakdown_text = ""
+        # Format vendor breakdown for calculation line
+        vendor_parts = []
         for vendor, amount in vendor_breakdown.items():
-            if vendor == "ENMAX":
-                breakdown_text += f"ENMAX (Wastewater): ${amount:.2f}\n"
-            elif vendor == "ATCO":
-                breakdown_text += f"ATCO (Electricity/Natural Gas): ${amount:.2f}\n"
+            if vendor == "ATCO":
+                vendor_parts.append(f"${amount:.2f} [Atco]")
+            elif vendor == "ENMAX":
+                vendor_parts.append(f"${amount:.2f} [Water&Waste]")
             else:
-                breakdown_text += f"{vendor}: ${amount:.2f}\n"
+                vendor_parts.append(f"${amount:.2f} [{vendor}]")
         
-        return f"""Hi everyone,
+        vendor_breakdown_str = " + ".join(vendor_parts)
+        
+        return f"""Hi everyone
 
-Attached are last month's utility bills.
+Attached are last month's utilities bills.
 
-Utility breakdown:
-{breakdown_text}Total utilities: ${total_utilities:.2f}
+The {rent_date} rent & utilities
+${base_rent:.0f} + {utility_share}%*({vendor_breakdown_str}) = ${final_amount:.2f}
 
-The {rent_date} rent amount is:
-${base_rent} + {utility_share}% * ${total_utilities:.2f} = ${final_amount:.2f}
-
-Thank you."""
+Thanks,
+Linda"""
     else:
         # Template for houses with single vendor (ENMAX only)
-        return f"""Hi everyone,
+        return f"""Hi everyone
 
-Attached is last month's utilities bill.
+Attached are last month's utilities bills.
 
-The {rent_date} rent amount is:
-${base_rent} + {utility_share}% * ${total_utilities:.2f} = ${final_amount:.2f}
+The {rent_date} rent & utilities
+${base_rent:.0f} + {utility_share}%*(${total_utilities:.2f}) = ${final_amount:.2f}
 
-Thank you."""
+Thanks,
+Linda"""
 
 def find_utility_images_from_bills(house: str, month_date: str, bills_data: List[Dict]) -> List[str]:
     """Find utility images directly from fresh bill data (no Excel dependency)."""
