@@ -95,7 +95,7 @@ def main():
     if rows:
         # Generate emails from fresh data BEFORE saving to Excel
         log.info("Processing complete. Generating email drafts from fresh data...")
-        # generate_email_drafts(rows)  # TEMPORARILY DISABLED
+        generate_email_drafts(rows)
         
         # Save to Excel for record-keeping
         log.info("Saving processed bills to Excel...")
