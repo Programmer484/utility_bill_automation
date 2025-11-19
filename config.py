@@ -19,7 +19,6 @@ DEFAULTS = {
     'processed_bills_folder': str(PROJECT_ROOT / "bills_processed"),
     'images_folder': str(PROJECT_ROOT / "bill_images"),
     'image_bottom_crop_px': 450,
-    'atco_indicator': 'statements',
     'house_numbers': ['819', '1705', '1707', '1712'],
     'move_processed_files': False,
     'test_email_drafts': False,
