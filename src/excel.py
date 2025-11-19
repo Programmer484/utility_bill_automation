@@ -38,20 +38,19 @@ def append_rows_to_excel(excel_path: str, rows: List[Dict], sheet_name: str) -> 
     if not rows:
         return
 
-    # Enrich rows with tenant data
+    # Enrich rows with tenant data (only tenant_name)
     enriched_rows = []
     for row in rows:
         enriched_row = row.copy()
         if "house_number" in row:
             tenant_data = get_tenant_data(str(row["house_number"]))
             enriched_row.update({
-                "tenant_name": tenant_data["tenant_name"],
-                "base_rent": tenant_data["base_rent"],
-                "utility_share_percent": tenant_data["utility_share_percent"]
+                "tenant_name": tenant_data["tenant_name"]
             })
         enriched_rows.append(enriched_row)
 
-    core_columns = ["file", "house_number", "tenant_name", "base_rent", "utility_share_percent", "bill_amount", "bill_date", "vendor"]
+    # Only include the 6 specified columns
+    core_columns = ["file", "house_number", "tenant_name", "bill_amount", "bill_date", "vendor"]
     df_new = pd.DataFrame(enriched_rows)
 
     extra_columns = [c for c in df_new.columns if c not in core_columns]

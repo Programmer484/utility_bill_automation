@@ -37,6 +37,7 @@ def process_single_file(filename: str) -> Optional[Dict]:
     iso_date = data.get("bill_date")
     amount = data.get("bill_amount")
     vendor = data.get("vendor")
+    
 
     if not (house and iso_date):
         log.warning("Skip (missing house/date): %s -> house:%s date:%s", filename, house, iso_date)
@@ -94,7 +95,7 @@ def main():
     if rows:
         # Generate emails from fresh data BEFORE saving to Excel
         log.info("Processing complete. Generating email drafts from fresh data...")
-        generate_email_drafts(rows)
+        # generate_email_drafts(rows)  # TEMPORARILY DISABLED
         
         # Save to Excel for record-keeping
         log.info("Saving processed bills to Excel...")
