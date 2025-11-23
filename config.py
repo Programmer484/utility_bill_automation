@@ -20,7 +20,7 @@ def _convert_value(key: str, value: Any) -> Any:
     
     if key == 'image_bottom_crop_px':
         return int(value)
-    elif key in ('move_processed_files', 'test_email_drafts'):
+    elif key in ('rename_files', 'test_email_drafts'):
         if isinstance(value, bool):
             return value
         return str(value).lower() in ('true', '1', 'yes')
@@ -58,7 +58,6 @@ def load_tenant_data() -> Dict[str, Dict[str, Any]]:
                 'base_rent': float(row['base_rent']),
                 'utility_share_percent': int(row['utility_share_percent'])
             }
-        
         return tenant_dict
         
     except Exception as e:
@@ -103,8 +102,8 @@ def get_house_numbers() -> List[str]:
         print(f"Error reading house numbers from Tenants sheet: {e}")
         return []
 
-def get_move_processed_files() -> bool:
-    return get_config('move_processed_files')
+def get_rename_files() -> bool:
+    return get_config('rename_files')
 
 # Tenant data functions
 def get_tenant_data(house_number: str = None) -> Dict[str, Any]:

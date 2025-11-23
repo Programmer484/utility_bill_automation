@@ -80,7 +80,7 @@ All extracted information is cleaned up and standardized:
 - Naming: `[house]_[date]_[vendor].png`
 
 ### File Organization
-- **Parameter**: `move_processed_files = TRUE/FALSE` in Excel config
+- **Parameter**: `rename_files = TRUE/FALSE` in Excel config
 - **If TRUE**: Move PDFs to processed folder and are renamed with format `[house] [Month Day Year] [vendor].pdf`
 - **If FALSE**: PDFs remain in original folder
 

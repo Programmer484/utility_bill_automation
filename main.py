@@ -5,7 +5,8 @@ from config import (
     get_excel_path,
     get_excel_data_sheet,
     get_raw_bills_folder,
-    get_move_processed_files,
+    get_processed_bills_folder,
+    get_rename_files,
 )
 from src.excel import append_rows_to_excel
 from src.data_processing import route_and_extract
@@ -25,42 +26,134 @@ log = logging.getLogger("bill-pipeline")
 
 # -------------------- processing functions --------------------
 
-def process_single_file(filename: str) -> Optional[Dict]:
-    """Extract, create image, move PDF; return row for Excel or None."""
-    try:
-        data = route_and_extract(filename)
-    except Exception:
-        log.error("Skipping due to extraction error: %s", filename)
-        return None
-
+def validate_data(data: Dict, filename: str) -> None:
+    """
+    Validate extracted bill data for required fields.
+    
+    Raises ValueError if validation fails.
+    Logs warning for missing optional fields.
+    """
     house = data.get("house_number")
     iso_date = data.get("bill_date")
     amount = data.get("bill_amount")
-    vendor = data.get("vendor")
     
-
-    if not (house and iso_date):
-        log.warning("Skip (missing house/date): %s -> house:%s date:%s", filename, house, iso_date)
-        return None
+    # Validate required fields
+    if not house or not iso_date:
+        error_msg = f"Missing required fields - house: {house}, date: {iso_date}"
+        log.error("Validation failed for %s: %s", filename, error_msg)
+        raise ValueError(error_msg)
+    
     if amount is None:
-        log.warning("Amount missing/invalid; continuing: %s", filename)
+        log.warning("Amount missing for %s; continuing with empty amount", filename)
 
-    # Create image (non-fatal on failure)
+
+def create_image_from_pdf(filename: str, house: str, iso_date: str, vendor: str) -> bool:
+    """
+    Create image from PDF first page.
+    
+    Returns True on success, False on failure.
+    Logs errors but does not raise exceptions (non-fatal operation).
+    """
     try:
         create_pdf_image(filename, house, iso_date, vendor)
-    except Exception:
-        log.exception("Image conversion failed (continuing): %s", filename)
+        log.info("Image created successfully for %s", filename)
+        return True
+    except Exception as e:
+        log.error("Image creation failed for %s: %s (continuing)", filename, str(e))
+        return False
 
-    # Conditionally move PDF file
-    if get_move_processed_files():
-        final_filename = move_processed_file(filename, str(house), iso_date, vendor)
-        log.info("File moved to processed folder")
+
+def rename_file(filename: str, house: str, iso_date: str, vendor: str) -> str:
+    """
+    Determine target filename based on RENAME_FILES config.
+    
+    If config is True, returns standardized filename.
+    If config is False, returns original filename.
+    Does not actually move or rename the file - just determines the name.
+    """
+    if get_rename_files():
+        # Use standardized naming from file_helpers
+        import os
+        from src.file_helpers import build_target_filename
+        _, ext = os.path.splitext(filename)
+        target_filename = build_target_filename(str(house), iso_date, vendor, ext)
+        log.info("Rename enabled: %s -> %s", filename, target_filename)
+        return target_filename
     else:
-        final_filename = filename  # Keep original filename, file stays in Downloads
-        log.info("File left in Downloads folder (MOVE_PROCESSED_FILES=False)")
+        log.info("Rename disabled: keeping original filename %s", filename)
+        return filename
 
+
+def move_file(filename: str, target_filename: str) -> None:
+    """
+    Move file from raw bills folder to processed bills folder.
+    Always moves the file regardless of config.
+    
+    Args:
+        filename: Original filename in raw folder
+        target_filename: Target filename in processed folder
+    """
+    import os
+    from pathlib import Path
+    
+    src_path = Path(get_raw_bills_folder()) / filename
+    dst_path = Path(get_processed_bills_folder()) / target_filename
+    
+    try:
+        os.replace(str(src_path), str(dst_path))
+        log.info("File moved: %s -> %s", src_path.name, dst_path.name)
+    except Exception as e:
+        log.error("Failed to move file %s: %s", filename, str(e))
+        raise
+
+
+def process_single_file(filename: str) -> Optional[Dict]:
+    """
+    Process a single PDF bill file through the complete pipeline.
+    
+    Steps:
+    1. Extract data from PDF
+    2. Validate extracted data
+    3. Create image from PDF (non-fatal)
+    4. Rename file (conditional on config)
+    5. Move file (always happens)
+    
+    Returns dict with processed data for Excel, or None if processing failed.
+    """
+    # Step 1: Extract data (fail fast on error)
+    try:
+        data = route_and_extract(filename)
+    except Exception as e:
+        log.error("Extraction failed for %s: %s", filename, str(e))
+        return None
+    
+    # Step 2: Validate data (fail fast on error)
+    try:
+        validate_data(data, filename)
+    except ValueError:
+        log.error("Validation failed for %s", filename)
+        return None
+    
+    house = data["house_number"]
+    iso_date = data["bill_date"]
+    amount = data["bill_amount"]
+    vendor = data["vendor"]
+    
+    # Step 3: Create image (non-fatal, continue on failure)
+    create_image_from_pdf(filename, house, iso_date, vendor)
+    
+    # Step 4: Determine target filename (rename if config enabled)
+    target_filename = rename_file(filename, str(house), iso_date, vendor)
+    
+    # Step 5: Move file (always happens)
+    try:
+        move_file(filename, target_filename)
+    except Exception:
+        log.error("Failed to move file: %s", filename)
+        return None
+    
     return {
-        "file": final_filename,
+        "file": target_filename,
         "house_number": house,
         "bill_amount": amount if amount is not None else "",
         "bill_date": iso_date,

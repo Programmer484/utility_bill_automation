@@ -37,9 +37,6 @@ HOUSE_POLICIES = {
     "default": {"required_vendors": ["ENMAX"], "template": "single_vendor"},
 }
 
-def _get_house_policy(house: str) -> dict:
-    return HOUSE_POLICIES.get(str(house), HOUSE_POLICIES["default"])
-
 def get_email_template(tenant_name: str, rent_date: str, base_rent: float, 
                       utility_share: int, total_utilities: float, final_amount: float, 
                       template_type: str = "single_vendor", vendor_breakdown: Dict = None) -> str:
@@ -47,41 +44,37 @@ def get_email_template(tenant_name: str, rent_date: str, base_rent: float,
     
     if template_type == "dual_vendor" and vendor_breakdown:
         # Template for houses with multiple vendors (ENMAX + ATCO)
-        # Format vendor breakdown for calculation line
-        vendor_parts = []
-        for vendor, amount in vendor_breakdown.items():
-            if vendor == "ATCO":
-                vendor_parts.append(f"${amount:.2f} [Atco]")
-            elif vendor == "ENMAX":
-                vendor_parts.append(f"${amount:.2f} [Water&Waste]")
-            else:
-                vendor_parts.append(f"${amount:.2f} [{vendor}]")
-        
-        vendor_breakdown_str = " + ".join(vendor_parts)
+        enmax_amount = vendor_breakdown.get("ENMAX", 0)
+        atco_amount = vendor_breakdown.get("ATCO", 0)
         
         return f"""Hi everyone
 
-Attached are last month's utilities bills.
+            Attached are last month's utilities bills.
 
-The {rent_date} rent & utilities
-${base_rent:.0f} + {utility_share}%*({vendor_breakdown_str}) = ${final_amount:.2f}
+            The {rent_date} rent & utilities
+            ${base_rent:.0f} + {utility_share}%*(${enmax_amount:.2f} [Water&Waste] + ${atco_amount:.2f} [Atco]) = ${final_amount:.2f}
 
-Thanks,
-Linda"""
+            Thanks,
+            Linda"""
+
     else:
         # Template for houses with single vendor (ENMAX only)
         return f"""Hi everyone
 
-Attached are last month's utilities bills.
+        Attached are last month's utilities bills.
 
-The {rent_date} rent & utilities
-${base_rent:.0f} + {utility_share}%*(${total_utilities:.2f}) = ${final_amount:.2f}
+        The {rent_date} rent & utilities
+        ${base_rent:.0f} + {utility_share}%*(${total_utilities:.2f}) = ${final_amount:.2f}
 
-Thanks,
-Linda"""
+        Thanks,
+        Linda"""
 
-def find_utility_images_from_bills(house: str, month_date: str, bills_data: List[Dict]) -> List[str]:
-    """Find utility images directly from fresh bill data (no Excel dependency)."""
+
+def _get_house_policy(house: str) -> dict:
+    return HOUSE_POLICIES.get(str(house), HOUSE_POLICIES["default"])
+
+def find_house_utility_images(house: str, month_date: str, bills_data: List[Dict]) -> List[str]:
+    """Find utility images for a specific house from bill data."""
     image_folder = Path(get_images_folder())
     image_paths = []
     
@@ -113,80 +106,13 @@ def find_utility_images_from_bills(house: str, month_date: str, bills_data: List
     
     return sorted(image_paths)  # Return in consistent order
 
-def find_utility_images(house: str, month_date: str) -> List[str]:
-    """Resolve utility bill images for a house and month, enforcing policy.
-
-    - Uses Data sheet to ensure all required vendors exist for the exact month.
-    - Returns image paths (one per vendor) in a stable order.
-    - Raises ValueError if a required vendor is missing for that month.
-    """
-    policy = _get_house_policy(house)
-    required_vendors = policy.get("required_vendors")
-
-    try:
-        df = pd.read_excel(get_excel_path(), sheet_name=get_excel_data_sheet())
-    except Exception as e:
-        print(f"Error reading Data sheet: {e}")
-        return []
-
-    df.columns = [c.strip().lower() for c in df.columns]
-    needed = {"file", "house_number", "bill_date", "vendor"}
-    missing = needed - set(df.columns)
-    if missing:
-        print(f"Data sheet missing columns: {sorted(missing)}")
-        return []
-
-    # Normalize
-    df["house_number"] = df["house_number"].astype(str)
-    df["vendor"] = df["vendor"].astype(str).str.strip().str.upper()
-    df["bill_date"] = pd.to_datetime(df["bill_date"], errors="coerce")
-    
-    # Compute month-end for each bill_date and filter
-    df["_month_key"] = df["bill_date"].apply(bill_date_to_month_end)
-    df_f = df[(df["house_number"] == str(house)) & (df["_month_key"] == str(month_date))]
-    if df_f.empty:
-        print(f"No data rows for house {house} in month {month_date}")
-        return []
-
-    # For each vendor present, pick the row with latest bill_date
-    image_folder = Path(get_images_folder())
-    vendor_to_image: dict[str, str] = {}
-    for vendor, grp in df_f.groupby("vendor"):
-        grp_sorted = grp.sort_values("bill_date")
-        row = grp_sorted.iloc[-1]
-        bill_dt = row["bill_date"]
-        if pd.isna(bill_dt):
-            # Fallback: try to derive bill_date from file name if needed (skip if not possible)
-            continue
-        iso_date = str(bill_dt.date())
-        img_name = f"{house}_{iso_date}_{vendor}.png"
-        img_path = image_folder / img_name
-        if img_path.exists():
-            vendor_to_image[vendor] = str(img_path)
-
-    if required_vendors:
-        missing_required = [v for v in required_vendors if v not in vendor_to_image]
-        if missing_required:
-            raise ValueError(
-                f"Missing required vendors for house {house} {month_date}: {missing_required}"
-            )
-
-        # return in required order
-        return [vendor_to_image[v] for v in required_vendors if v in vendor_to_image]
-
-    # default: return all images we found, sorted by vendor name for stability
-    return [vendor_to_image[v] for v in sorted(vendor_to_image.keys())]
-
 def create_email_draft(house: str, month_date: str, total_utilities: float, vendor_breakdown: Dict = None, bills_data: List[Dict] = None) -> MIMEMultipart:
     """Create email draft for a specific house."""
     
     # Find utility images directly from fresh bill data instead of Excel
     if bills_data:
-        image_paths = find_utility_images_from_bills(house, month_date, bills_data)
-    else:
-        # Fallback to Excel-based lookup (for backward compatibility)
-        image_paths = find_utility_images(house, month_date)
-    
+        image_paths = find_house_utility_images(house, month_date, bills_data)
+
     # Additional check: ensure we actually have some images to attach
     if not image_paths:
         raise ValueError(f"No utility bill images found for house {house} {month_date}")
