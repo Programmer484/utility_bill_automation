@@ -47,22 +47,6 @@ def validate_data(data: Dict, filename: str) -> None:
         log.warning("Amount missing for %s; continuing with empty amount", filename)
 
 
-def create_image_from_pdf(filename: str, house: str, iso_date: str, vendor: str) -> bool:
-    """
-    Create image from PDF first page.
-    
-    Returns True on success, False on failure.
-    Logs errors but does not raise exceptions (non-fatal operation).
-    """
-    try:
-        create_pdf_image(filename, house, iso_date, vendor)
-        log.info("Image created successfully for %s", filename)
-        return True
-    except Exception as e:
-        log.error("Image creation failed for %s: %s (continuing)", filename, str(e))
-        return False
-
-
 def rename_file(filename: str, house: str, iso_date: str, vendor: str) -> str:
     """
     Determine target filename based on RENAME_FILES config.
@@ -107,7 +91,7 @@ def move_file(filename: str, target_filename: str) -> None:
         raise
 
 
-def process_single_file(filename: str) -> Optional[Dict]:
+def process_single_file(filename: str, source_folder: str = None, move_file_after: bool = True) -> Optional[Dict]:
     """
     Process a single PDF bill file through the complete pipeline.
     
@@ -115,14 +99,22 @@ def process_single_file(filename: str) -> Optional[Dict]:
     1. Extract data from PDF
     2. Validate extracted data
     3. Create image from PDF (non-fatal)
-    4. Rename file (conditional on config)
-    5. Move file (always happens)
+    4. Rename file (conditional on config, only if move_file_after=True)
+    5. Move file (only if move_file_after=True)
+    
+    Args:
+        filename: Name of the PDF file
+        source_folder: Source folder containing the PDF. If None, uses get_raw_bills_folder()
+        move_file_after: If True, rename and move file after processing. If False, leave file in place.
     
     Returns dict with processed data for Excel, or None if processing failed.
     """
+    if source_folder is None:
+        source_folder = get_raw_bills_folder()
+    
     # Step 1: Extract data (fail fast on error)
     try:
-        data = route_and_extract(filename)
+        data = route_and_extract(filename, source_folder)
     except Exception as e:
         log.error("Extraction failed for %s: %s", filename, str(e))
         return None
@@ -140,17 +132,22 @@ def process_single_file(filename: str) -> Optional[Dict]:
     vendor = data["vendor"]
     
     # Step 3: Create image (non-fatal, continue on failure)
-    create_image_from_pdf(filename, house, iso_date, vendor)
+    try:
+        create_pdf_image(filename, house, iso_date, vendor, source_folder)
+        log.info("Image created successfully for %s", filename)
+    except Exception as e:
+        log.error("Image creation failed for %s: %s (continuing)", filename, str(e))
     
     # Step 4: Determine target filename (rename if config enabled)
     target_filename = rename_file(filename, str(house), iso_date, vendor)
     
-    # Step 5: Move file (always happens)
-    try:
-        move_file(filename, target_filename)
-    except Exception:
-        log.error("Failed to move file: %s", filename)
-        return None
+    # Step 5: Move file (only if requested)
+    if move_file_after:
+        try:
+            move_file(filename, target_filename)
+        except Exception:
+            log.error("Failed to move file: %s", filename)
+            return None
     
     return {
         "file": target_filename,

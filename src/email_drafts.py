@@ -236,35 +236,51 @@ def save_draft_via_imap(msg: MIMEMultipart) -> bool:
         print(f"Error saving draft via IMAP: {e}")
         return False
 
-def generate_email_drafts(processed_bills: List[Dict]) -> None:
+def _group_bills_by_house(processed_bills: List[Dict], custom_month: int = None) -> Dict[str, tuple]:
     """
-    Generate email drafts from freshly processed bill data.
+    Group bills by house and determine the month to use for each house.
     
     Args:
         processed_bills: List of bill dicts with keys: house_number, bill_date, bill_amount, vendor
+        custom_month: If provided (1-12), use this month instead of deriving from bill dates
+    
+    Returns:
+        Dict mapping house -> (month_date, bills_list)
+        where month_date is ISO date string and bills_list is list of bill dicts
     """
-    # Check if we're in test/dry run mode
-    try:
-        test_mode = get_config('test_email_drafts')
-        if test_mode:
-            print("TEST MODE: Printing email drafts instead of creating them")
-    except Exception:
-        test_mode = False
+    from datetime import datetime
+    from collections import defaultdict
+    import calendar as cal
     
-    if not test_mode and (not YAHOO_USER or not YAHOO_APP_PASSWORD):
-        print("Error: YAHOO_USER and YAHOO_APP_PASSWORD environment variables required")
-        return
-    
-    if not processed_bills:
-        print("No bills to process for email generation")
-        return
-    
-    try:
-        # Group bills by house and month
-        from datetime import datetime
-        from collections import defaultdict
+    if custom_month is not None:
+        # Custom month mode: group by house only, use custom month for all
+        bills_by_house = defaultdict(list)
         
-        # Structure: {house: {month_key: [bills]}}
+        for bill in processed_bills:
+            house = str(bill['house_number'])
+            bill_date = bill['bill_date']
+            amount = bill.get('bill_amount')
+            vendor = bill.get('vendor')
+            
+            if not bill_date or amount is None or amount == '':
+                continue
+            
+            bills_by_house[house].append({
+                'vendor': vendor,
+                'amount': float(amount),
+                'date': bill_date
+            })
+        
+        # Create month-end date for custom month
+        year = datetime.now().year
+        last_day = cal.monthrange(year, custom_month)[1]
+        custom_month_date = f"{year:04d}-{custom_month:02d}-{last_day:02d}"
+        
+        # Return dict with same month for all houses
+        return {house: (custom_month_date, bills) for house, bills in bills_by_house.items()}
+    
+    else:
+        # Normal mode: group by house and month, use latest month
         bills_by_house_month = defaultdict(lambda: defaultdict(list))
         
         for bill in processed_bills:
@@ -284,44 +300,102 @@ def generate_email_drafts(processed_bills: List[Dict]) -> None:
                 'date': bill_date
             })
         
-        print(f"Generating email drafts for {len(bills_by_house_month)} houses...")
-        
-        # Generate emails for each house's latest month
+        # Return dict with latest month for each house
+        result = {}
         for house, months_data in bills_by_house_month.items():
-            # Get the latest month for this house
             latest_month = max(months_data.keys())
-            bills_for_month = months_data[latest_month]
-            
+            result[house] = (latest_month, months_data[latest_month])
+        
+        return result
+
+
+def _send_or_print_draft(msg: MIMEMultipart, house: str, test_mode: bool) -> bool:
+    """
+    Send draft via IMAP or print details in test mode.
+    
+    Args:
+        msg: Email message to send
+        house: House number for logging
+        test_mode: If True, print details instead of sending
+    
+    Returns:
+        True if successful, False otherwise
+    """
+    if test_mode:
+        # Test mode - just print what would be sent
+        print(f"TEST: Would create email draft for {house}")
+        print(f"  Subject: {msg['Subject']}")
+        print(f"  To: {msg['To']}")
+        
+        # List attachments
+        attach_names = list_attachments(msg)
+        print(f"  Attachments ({len(attach_names)}): {attach_names}")
+        print()
+        return True
+    else:
+        # Real mode - save draft to Yahoo via IMAP
+        saved = save_draft_via_imap(msg)
+        if not saved:
+            print(f"Failed to save draft for {house} via IMAP")
+        return saved
+
+
+def generate_email_drafts(processed_bills: List[Dict], test_mode: bool = None, custom_month: int = None) -> None:
+    """
+    Generate email drafts from freshly processed bill data.
+    
+    Args:
+        processed_bills: List of bill dicts with keys: house_number, bill_date, bill_amount, vendor
+        test_mode: If True, print email details instead of creating drafts. If None, reads from config.
+        custom_month: If provided (1-12), use this month instead of deriving from bill dates
+    """
+    # Check if we're in test/dry run mode
+    if test_mode is None:
+        try:
+            test_mode = get_config('test_email_drafts')
+            if test_mode:
+                print("TEST MODE: Printing email drafts instead of creating them")
+        except Exception:
+            test_mode = False
+    
+    if not test_mode and (not YAHOO_USER or not YAHOO_APP_PASSWORD):
+        print("Error: YAHOO_USER and YAHOO_APP_PASSWORD environment variables required")
+        return
+    
+    if not processed_bills:
+        print("No bills to process for email generation")
+        return
+    
+    try:
+        # Group bills by house and determine month for each
+        bills_by_house = _group_bills_by_house(processed_bills, custom_month)
+        
+        # Print status message
+        if custom_month is not None:
+            import calendar as cal
+            print(f"Generating email drafts for {len(bills_by_house)} houses using custom month {custom_month} ({cal.month_name[custom_month]})...")
+        else:
+            print(f"Generating email drafts for {len(bills_by_house)} houses...")
+        
+        # Generate emails for each house
+        for house, (month_date, bills_for_month) in bills_by_house.items():
             # Calculate total utilities
             total_utilities = sum(b['amount'] for b in bills_for_month)
             
-            print(f"Processing {house} for {latest_month} (utilities: ${total_utilities:.2f})")
+            # Create vendor breakdown for dual vendor emails
+            vendor_breakdown = {b['vendor']: b['amount'] for b in bills_for_month}
+            
+            print(f"Processing {house} for {month_date} (utilities: ${total_utilities:.2f})")
             
             try:
-                # Create vendor breakdown for dual vendor emails
-                vendor_breakdown = {b['vendor']: b['amount'] for b in bills_for_month}
-                
                 # Create email draft (will enforce required vendors when applicable)
-                msg = create_email_draft(house, latest_month, total_utilities, vendor_breakdown, bills_for_month)
+                msg = create_email_draft(house, month_date, total_utilities, vendor_breakdown, bills_for_month)
                 
-                if test_mode:
-                    # Test mode - just print what would be sent
-                    print(f"TEST: Would create email draft for {house}")
-                    print(f"  Subject: {msg['Subject']}")
-                    print(f"  To: {msg['To']}")
-                    
-                    # List attachments
-                    attach_names = list_attachments(msg)
-                    print(f"  Attachments ({len(attach_names)}): {attach_names}")
-                    print()
-                else:
-                    # Real mode - save draft to Yahoo via IMAP
-                    saved = save_draft_via_imap(msg)
-                    if not saved:
-                        print(f"Failed to save draft for {house} via IMAP")
+                # Send or print the draft
+                _send_or_print_draft(msg, house, test_mode)
                         
             except Exception as e:
-                print(f"Skipping {house} for {latest_month}: {e}")
+                print(f"Skipping {house} for {month_date}: {e}")
                 continue
         
         if test_mode:

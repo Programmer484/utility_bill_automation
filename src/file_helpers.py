@@ -62,12 +62,19 @@ def build_target_filename(house: str, iso_date: str, vendor: str, ext: str) -> s
 
 # -------------------- PDF & Image Processing --------------------
 
-def create_pdf_image(filename: str, house, iso_date: str, vendor: str) -> None:
+def create_pdf_image(filename: str, house, iso_date: str, vendor: str, source_folder: str) -> None:
     """
     Convert first page of PDF to image with bottom crop (pixels).
     Avoid double-rendering; cropping is handled inside convert_pdf_to_image.
+    
+    Args:
+        filename: Name of the PDF file
+        house: House number
+        iso_date: ISO date string (YYYY-MM-DD)
+        vendor: Vendor name
+        source_folder: Source folder path containing the PDF
     """
-    src_path = Path(get_raw_bills_folder()) / filename
+    src_path = Path(source_folder) / filename
     image_name = safe_filename(f"{house}_{iso_date}_{vendor}.png")
     image_path = Path(get_images_folder()) / image_name
     convert_pdf_to_image(

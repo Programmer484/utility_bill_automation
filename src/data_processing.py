@@ -54,16 +54,23 @@ def normalize_row(row: Dict) -> Dict:
     return out
 
 
-def route_and_extract(filename: str) -> Dict:
-    """Extract bill data from PDF and determine vendor by content analysis."""
-    raw_bills_folder = get_raw_bills_folder()
+def route_and_extract(filename: str, source_folder: str) -> Dict:
+    """
+    Extract bill data from PDF and determine vendor by content analysis.
     
+    Args:
+        filename: Name of the PDF file
+        source_folder: Folder containing the PDF file
+    
+    Returns:
+        Dict with normalized bill data: house_number, bill_amount, bill_date, vendor
+    """
     # Detect vendor from PDF content
-    vendor = detect_vendor_from_pdf(filename, raw_bills_folder)
+    vendor = detect_vendor_from_pdf(filename, source_folder)
     extractor = extract_atco_from_pdf if vendor == "ATCO" else extract_enmax_from_pdf
     
     try:
-        data = extractor(filename, folder=raw_bills_folder)
+        data = extractor(filename, folder=source_folder)
     except Exception as e:
         log.exception("Extractor failed: %s", filename)
         raise
