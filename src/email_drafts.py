@@ -91,8 +91,9 @@ def find_house_utility_images(house: str, month_date: str, bills_data: List[Dict
         vendor = bill['vendor']
         bill_date = bill['date']
         
-        # Create expected image filename
-        img_name = f"{house}_{bill_date}_{vendor}.png"
+        # Create expected image filename (matches bill naming: {house} {YYYY-MM} {vendor}.png)
+        date_formatted = bill_date[:7]  # Extract YYYY-MM from YYYY-MM-DD
+        img_name = f"{house} {date_formatted} {vendor}.png"
         img_path = image_folder / img_name
         
         if img_path.exists():

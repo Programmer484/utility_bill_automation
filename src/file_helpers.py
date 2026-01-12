@@ -80,7 +80,7 @@ def create_pdf_image(filename: str, house, iso_date: str, vendor: str, source_fo
         source_folder: Source folder path containing the PDF
     """
     src_path = Path(source_folder) / filename
-    image_name = safe_filename(f"{house}_{iso_date}_{vendor}.png")
+    image_name = build_target_filename(str(house), iso_date, vendor, ".png")
     image_path = Path(get_images_folder()) / image_name
     convert_pdf_to_image(
         str(src_path),
