@@ -88,11 +88,26 @@ def make_house_line_regex(houses):
     alts = "|".join(sorted((re.escape(h) for h in houses), key=len, reverse=True))
     return re.compile(rf'(?mi)^\s*({alts})\b')
 
+def _get_previous_month(month: int, year: int) -> tuple:
+    """
+    Get the previous month and year, handling year rollover.
+    
+    Args:
+        month: Current month (1-12)
+        year: Current year
+    
+    Returns:
+        Tuple of (previous_month, adjusted_year)
+    """
+    if month == 1:
+        return (12, year - 1)
+    return (month - 1, year)
+
 def extract_atco_from_pdf(pdf_file: str, folder: str = None) -> dict:
     """
     Extract bill data from ATCO PDF.
     Returns: {'file', 'house_number', 'bill_amount', 'bill_date'}
-    - bill_date is ISO YYYY-MM-DD from 'Statement Date: AUG 20, 2025'
+    - bill_date is ISO YYYY-MM-DD derived from 'Total Amount Due By' month (minus 1 month)
     - house_number is matched at start of address line using config numbers
     """
     path = os.path.join(folder, pdf_file) if folder else pdf_file
@@ -108,16 +123,21 @@ def extract_atco_from_pdf(pdf_file: str, folder: str = None) -> dict:
     )
     bill_amount = amt_match.group(1).replace(",", "") if amt_match else None
 
-    date_match = re.search(
-        r'Statement\s*Date:\s*([A-Z]{3})\s+(\d{1,2}),\s*(\d{4})',
+    # Extract month from "Total Amount Due By: MON DD, YYYY" and use previous month
+    bill_date = None
+    due_by_match = re.search(
+        r'Total\s+Amount\s+Due\s+By:\s*([A-Z]{3})\s+\d{1,2},\s*(\d{4})',
         text, re.IGNORECASE
     )
-    bill_date = None
-    if date_match:
-        mon_abbr, d, y = date_match.groups()
+    if due_by_match:
+        mon_abbr, y = due_by_match.groups()
         mm = MONTHS_ABBR.get(mon_abbr.upper())
         if mm:
-            bill_date = f"{y}-{mm}-{int(d):02d}"
+            due_month = int(mm)
+            due_year = int(y)
+            # Use previous month as the bill month
+            prev_month, prev_year = _get_previous_month(due_month, due_year)
+            bill_date = f"{prev_year}-{prev_month:02d}-01"
 
     return {
         "file": os.path.basename(path),

@@ -47,27 +47,31 @@ def get_email_template(tenant_name: str, rent_date: str, base_rent: float,
         enmax_amount = vendor_breakdown.get("ENMAX", 0)
         atco_amount = vendor_breakdown.get("ATCO", 0)
         
-        return f"""Hi everyone
-
-            Attached are last month's utilities bills.
-
-            The {rent_date} rent & utilities
-            ${base_rent:.0f} + {utility_share}%*(${enmax_amount:.2f} [Water&Waste] + ${atco_amount:.2f} [Atco]) = ${final_amount:.2f}
-
-            Thanks,
-            Linda"""
+        return (
+            f"Hi everyone\n"
+            f"\n"
+            f"Attached are last month's utilities bills.\n"
+            f"\n"
+            f"The {rent_date} rent & utilities\n"
+            f"${base_rent:.0f} + {utility_share}%*(${enmax_amount:.2f} [Water&Waste] + ${atco_amount:.2f} [Atco]) = ${final_amount:.2f}\n"
+            f"\n"
+            f"Thanks,\n"
+            f"Linda"
+        )
 
     else:
         # Template for houses with single vendor (ENMAX only)
-        return f"""Hi everyone
-
-        Attached are last month's utilities bills.
-
-        The {rent_date} rent & utilities
-        ${base_rent:.0f} + {utility_share}%*(${total_utilities:.2f}) = ${final_amount:.2f}
-
-        Thanks,
-        Linda"""
+        return (
+            f"Hi everyone\n"
+            f"\n"
+            f"Attached are last month's utilities bills.\n"
+            f"\n"
+            f"The {rent_date} rent & utilities\n"
+            f"${base_rent:.0f} + {utility_share}%*(${total_utilities:.2f}) = ${final_amount:.2f}\n"
+            f"\n"
+            f"Thanks,\n"
+            f"Linda"
+        )
 
 
 def _get_house_policy(house: str) -> dict:
@@ -129,7 +133,7 @@ def create_email_draft(house: str, month_date: str, total_utilities: float, vend
     utility_share_amount = (utility_share_percent / 100) * total_utilities
     final_amount = base_rent + utility_share_amount
     
-    # Format rent date (month after bill month, without day)
+    # Format rent date (month after bill month, with two-digit day)
     try:
         from datetime import datetime, timedelta
         import calendar
@@ -141,8 +145,8 @@ def create_email_draft(house: str, month_date: str, total_utilities: float, vend
         next_month_dt = bill_dt.replace(day=1) + timedelta(days=32)
         next_month_dt = next_month_dt.replace(day=1)  # First of next month
         
-        # Format as "Month 1" (first of the month)
-        rent_date = next_month_dt.strftime("%B 1")
+        # Format as "Month 01" (first of the month, two-digit day)
+        rent_date = next_month_dt.strftime("%B") + " 01"
     except:
         rent_date = month_date
     
