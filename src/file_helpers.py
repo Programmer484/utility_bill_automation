@@ -55,9 +55,14 @@ def iso_to_month_day_year(iso: str) -> str:
     y, m, d = map(int, iso.split("-"))
     return f"{calendar.month_name[m]} {d} {y}"
 
+def iso_to_year_month(iso: str) -> str:
+    """Convert ISO date (YYYY-MM-DD) to 'YYYY-MM' format."""
+    y, m, _ = map(int, iso.split("-"))
+    return f"{y:04d}-{m:02d}"
+
 def build_target_filename(house: str, iso_date: str, vendor: str, ext: str) -> str:
-    """Build standardized filename: '{house} {Month day year} {vendor}.ext'"""
-    date_formatted = iso_to_month_day_year(iso_date)
+    """Build standardized filename: '{house} {YYYY-MM} {vendor}.ext'"""
+    date_formatted = iso_to_year_month(iso_date)
     return safe_filename(f"{house} {date_formatted} {vendor}") + ext
 
 # -------------------- PDF & Image Processing --------------------
@@ -75,7 +80,7 @@ def create_pdf_image(filename: str, house, iso_date: str, vendor: str, source_fo
         source_folder: Source folder path containing the PDF
     """
     src_path = Path(source_folder) / filename
-    image_name = safe_filename(f"{house}_{iso_date}_{vendor}.png")
+    image_name = build_target_filename(str(house), iso_date, vendor, ".png")
     image_path = Path(get_images_folder()) / image_name
     convert_pdf_to_image(
         str(src_path),
